@@ -1,142 +1,131 @@
-`timescale 1ns/1ps
+module vending_machine (
+    input clk,
+    input reset,
+    input quarter,
+    input half,
+    input dollar,
+    input select_coke,
+    input select_pepsi,
+    input select_water,
+    input cancel,
+    
+    output reg dispense_coke,
+    output reg dispense_pepsi,
+    output reg dispense_water,
+    output reg [7:0] change,
+    output reg [7:0] balance,
+    output reg [2:0] state_display
+);
 
-module tb_vending_machine_fixed;
-    // Testbench signals
-    reg clk;
-    reg reset;
-    reg quarter;
-    reg half;
-    reg dollar;
-    reg select_coke;
-    reg select_pepsi;
-    reg select_water;
-    reg cancel;
-    
-    wire dispense_coke;
-    wire dispense_pepsi;
-    wire dispense_water;
-    wire [7:0] change;
-    wire [7:0] balance;
-    wire [2:0] state_display;
-    
-    // Clock period
-    parameter CLK_PERIOD = 10;
-    
-    // Instantiate the vending machine
-    vending_machine uut (
-        .clk(clk),
-        .reset(reset),
-        .quarter(quarter),
-        .half(half),
-        .dollar(dollar),
-        .select_coke(select_coke),
-        .select_pepsi(select_pepsi),
-        .select_water(select_water),
-        .cancel(cancel),
-        .dispense_coke(dispense_coke),
-        .dispense_pepsi(dispense_pepsi),
-        .dispense_water(dispense_water),
-        .change(change),
-        .balance(balance),
-        .state_display(state_display)
-    );
-    
-    // Clock generation
-    initial clk = 0;
-    always #(CLK_PERIOD/2) clk = ~clk;
-    
-    // Test procedure
-    initial begin
-        // Create VCD file for GTKWave
-        $dumpfile("vending_machine_fixed.vcd");
-        $dumpvars(0, tb_vending_machine_fixed);
+// State encoding
+parameter IDLE = 3'd0;
+parameter BALANCE_25 = 3'd1;
+parameter BALANCE_50 = 3'd2;
+parameter BALANCE_75 = 3'd3;
+parameter BALANCE_100 = 3'd4;
+parameter DISPENSE = 3'd5;
+parameter RETURN = 3'd6;
+
+reg [2:0] state, next_state;
+reg [7:0] current_balance;
+reg [1:0] product; // 00: coke, 01: pepsi, 10: water
+
+// State register with reset
+always @(posedge clk or posedge reset) begin
+    if (reset) begin
+        state <= IDLE;
+        current_balance <= 8'd0;
+        product <= 2'b00;
+    end else begin
+        state <= next_state;
         
-        // Initialize all signals at time 0
-        clk = 0;
-        reset = 1;        // Start with reset active
-        quarter = 0;
-        half = 0;
-        dollar = 0;
-        select_coke = 0;
-        select_pepsi = 0;
-        select_water = 0;
-        cancel = 0;
+        // Update balance
+        if (quarter) current_balance <= current_balance + 8'd25;
+        else if (half) current_balance <= current_balance + 8'd50;
+        else if (dollar) current_balance <= current_balance + 8'd100;
+        else if (cancel || (next_state == DISPENSE)) current_balance <= 8'd0;
         
-        // Display header
-        $display("==========================================================");
-        $display("VENDING MACHINE FSM TESTBENCH");
-        $display("==========================================================");
-        $display("Time\tState\tBalance\tAction");
-        $display("==========================================================");
-        
-        // Hold reset for 20ns to initialize everything
-        #20;
-        $display("%0t\t%d\t$%0.2f\tReset released", 
-                 $time, state_display, balance/100.0);
-        
-        // Release reset
-        reset = 0;
-        #10;
-        
-        // TEST 1: Insert 2 quarters ($0.50)
-        $display("\n--- TEST 1: Insert 2 quarters ---");
-        quarter = 1; #10; quarter = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tQuarter inserted", 
-                 $time, state_display, balance/100.0);
-        
-        quarter = 1; #10; quarter = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tQuarter inserted", 
-                 $time, state_display, balance/100.0);
-        
-        // TEST 2: Insert $1.00 more (total $1.50 - enough for Coke)
-        $display("\n--- TEST 2: Insert dollar for Coke ---");
-        dollar = 1; #10; dollar = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tDollar inserted", 
-                 $time, state_display, balance/100.0);
-        
-        // Select Coke
-        $display("\n--- TEST 3: Select Coke ---");
-        select_coke = 1; #10; select_coke = 0; #20;
-        $display("%0t\t%d\t$%0.2f\tCoke selected - Dispensing", 
-                 $time, state_display, balance/100.0);
-        $display("Change: $%0.2f", change/100.0);
-        
-        // Wait a bit
-        #30;
-        
-        // TEST 4: Test cancel functionality
-        $display("\n--- TEST 4: Test Cancel ---");
-        reset = 1; #20; reset = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tReset complete", 
-                 $time, state_display, balance/100.0);
-        
-        // Insert some coins
-        quarter = 1; #10; quarter = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tQuarter inserted", 
-                 $time, state_display, balance/100.0);
-        
-        half = 1; #10; half = 0; #10;
-        $display("%0t\t%d\t$%0.2f\tHalf dollar inserted", 
-                 $time, state_display, balance/100.0);
-        
-        // Cancel transaction
-        $display("\n--- TEST 5: Cancel transaction ---");
-        cancel = 1; #10; cancel = 0; #20;
-        $display("%0t\t%d\t$%0.2f\tTransaction cancelled", 
-                 $time, state_display, balance/100.0);
-        
-        #30;
-        
-        $display("\n==========================================================");
-        $display("All tests completed!");
-        $display("==========================================================");
-        
-        $finish;
+        // Store product selection
+        if (select_coke) product <= 2'b00;
+        else if (select_pepsi) product <= 2'b01;
+        else if (select_water) product <= 2'b10;
     end
+end
+
+// Next state logic
+always @(*) begin
+    next_state = state;
+    dispense_coke = 0;
+    dispense_pepsi = 0;
+    dispense_water = 0;
+    change = 8'd0;
     
-    // Monitor state changes
-    always @(state_display) begin
-        $display("  State changed to %d at time %0t", state_display, $time);
-    end
+    case (state)
+        IDLE: begin
+            if (quarter) next_state = BALANCE_25;
+            else if (half) next_state = BALANCE_50;
+            else if (dollar) next_state = BALANCE_100;
+        end
+        
+        BALANCE_25: begin
+            if (quarter) next_state = BALANCE_50;
+            else if (half) next_state = BALANCE_75;
+            else if (dollar) next_state = BALANCE_100;
+            else if (cancel) next_state = RETURN;
+            else if (select_water && current_balance >= 100) next_state = DISPENSE;
+            else if ((select_coke || select_pepsi) && current_balance >= 150) next_state = DISPENSE;
+        end
+        
+        BALANCE_50: begin
+            if (quarter) next_state = BALANCE_75;
+            else if (half) next_state = BALANCE_100;
+            else if (dollar) next_state = BALANCE_100;
+            else if (cancel) next_state = RETURN;
+            else if (select_water && current_balance >= 100) next_state = DISPENSE;
+            else if ((select_coke || select_pepsi) && current_balance >= 150) next_state = DISPENSE;
+        end
+        
+        BALANCE_75: begin
+            if (quarter) next_state = BALANCE_100;
+            else if (half) next_state = BALANCE_100;
+            else if (dollar) next_state = BALANCE_100;
+            else if (cancel) next_state = RETURN;
+            else if (select_water && current_balance >= 100) next_state = DISPENSE;
+            else if ((select_coke || select_pepsi) && current_balance >= 150) next_state = DISPENSE;
+        end
+        
+        BALANCE_100: begin
+            if (quarter) next_state = BALANCE_100;
+            else if (half) next_state = BALANCE_100;
+            else if (dollar) next_state = BALANCE_100;
+            else if (cancel) next_state = RETURN;
+            else if (select_water && current_balance >= 100) next_state = DISPENSE;
+            else if ((select_coke || select_pepsi) && current_balance >= 150) next_state = DISPENSE;
+        end
+        
+        DISPENSE: begin
+            if (product == 2'b00) dispense_coke = 1;
+            else if (product == 2'b01) dispense_pepsi = 1;
+            else dispense_water = 1;
+            
+            if (product == 2'b10) change = current_balance - 100;
+            else change = current_balance - 150;
+            
+            next_state = RETURN;
+        end
+        
+        RETURN: begin
+            next_state = IDLE;
+        end
+        
+        default: next_state = IDLE;
+    endcase
+end
+
+// Output assignments
+always @(*) begin
+    balance = current_balance;
+    state_display = state;
+end
 
 endmodule
